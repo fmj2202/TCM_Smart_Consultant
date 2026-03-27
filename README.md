@@ -46,21 +46,22 @@
 
 ### 🚀 快速开始
 
-1. **克隆项目**  
+1. **克隆项目**
+   ```bash
    git clone https://github.com/fmj2202/TCM_Smart_Consultant.git
    cd TCM_Smart_Consultant
    
-2. **安装依赖**
+3. **安装依赖**
    ```bash
    pip install -r requirements.txt
    
-3. **配置环境变量**
+4. **配置环境变量**
    ```bash
    API_KEY=sk-你的密钥
    BASE_URL=https://api.siliconflow.cn/v1
    MODEL_NAME=deepseek-ai/DeepSeek-V3
    VISION_MODEL=internlm/internlm-x2.5-7b-chat    # 视觉模型
    
-4. **运行项目**
+5. **运行项目**
    ```bash
    streamlit run app.py

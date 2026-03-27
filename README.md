@@ -46,15 +46,18 @@
    ```bash
    git clone https://github.com/fmj2202/TCM_Smart_Consultant.git
    cd TCM_Smart_Consultant
+   
 2.**安装依赖**
    ```bash
    pip install -r requirements.txt
+
 3.**配置环境变量（新建 .env 文件）**
    ```bash
    API_KEY=sk-你的密钥
    BASE_URL=https://api.siliconflow.cn/v1
    MODEL_NAME=deepseek-ai/DeepSeek-V3
    VISION_MODEL=internlm/internlm-x2.5-7b-chat   # 视觉模型
+
 4.**运行项目**
    ```bash
    streamlit run app.py

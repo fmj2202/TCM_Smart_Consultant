@@ -1,111 +1,151 @@
 import os
+from pathlib import Path
+import shutil
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-# 设置环境变量，强制使用国内镜像站
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# 加载环境变量
+# ==================== 加载环境变量 ====================
 load_dotenv()
 
 
-# --- 1. 获取 LLM 实例 (通过 API) ---
+# ==================== 1. get_llm ====================
 def get_llm():
-    """
-    初始化并返回大模型实例
-    """
-    api_key = os.getenv("API_KEY")
-    base_url = os.getenv("BASE_URL")
-    model_name = os.getenv("MODEL_NAME")
-
-    if not api_key:
-        raise ValueError("❌ 错误：未在 .env 中找到 API_KEY，请检查配置。")
-
     return ChatOpenAI(
-        api_key=api_key,
-        base_url=base_url,
-        model=model_name,
-        temperature=0.7,
+        model=os.getenv("MODEL_NAME"),
+        openai_api_key=os.getenv("API_KEY"),
+        openai_api_base=os.getenv("BASE_URL"),
+        temperature=0.3,
+        max_tokens=2048,
+        streaming=False
     )
 
 
-# --- 2. 获取向量模型 (Embedding) ---
-def get_embeddings():
-    """
-    初始化 Embedding 模型。
-    注意：第一次运行会从 HuggingFace 下载模型，请保持网络通畅。
-    """
-    model_name = "shibing624/text2vec-base-chinese"
-    # 使用 CPU 运行（对本科生电脑最友好，不需要显卡）
-    model_kwargs = {'device': 'cpu'}
-    encode_kwargs = {'normalize_embeddings': False}
-
-    return HuggingFaceEmbeddings(
-        model_name=model_name,
-        model_kwargs=model_kwargs,
-        encode_kwargs=encode_kwargs
-    )
+# ==================== 2. 中文 embedding 模型 ====================
+embeddings = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-small-zh-v1.5"
+)
 
 
-# --- 3. 文献处理逻辑 ---
-def process_document(file_path):
-    """
-    核心流程：加载 -> 切分 -> 向量化 -> 存储
-    """
-    # 3.1 加载文件
-    if file_path.endswith('.pdf'):
-        loader = PyPDFLoader(file_path)
-    elif file_path.endswith('.docx'):
-        loader = Docx2txtLoader(file_path)
+# ==================== 3. 知识库路径管理 ====================
+def get_kb_path(kb_name: str) -> Path:
+    return Path("data/kbs").absolute() / kb_name
+
+
+def list_knowledge_bases() -> list:
+    kb_root = Path("data/kbs").absolute()
+    kb_root.mkdir(parents=True, exist_ok=True)
+    return [d.name for d in kb_root.iterdir() if d.is_dir()]
+
+
+def create_knowledge_base(kb_name: str):
+    path = get_kb_path(kb_name)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def process_documents(kb_name: str, file_paths: list):
+    """文档处理"""
+    kb_path = get_kb_path(kb_name)
+    kb_path.mkdir(parents=True, exist_ok=True)
+
+    all_docs = []
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=650, chunk_overlap=200)
+
+    for file_path in file_paths:
+        if str(file_path).lower().endswith('.pdf'):
+            loader = PyPDFLoader(str(file_path))
+        elif str(file_path).lower().endswith(('.docx', '.doc')):
+            loader = Docx2txtLoader(str(file_path))
+        else:
+            continue
+        docs = loader.load()
+        all_docs.extend(docs)
+
+    splits = text_splitter.split_documents(all_docs)
+
+    vectorstore_path = kb_path / "faiss_index"
+    vectorstore_path.mkdir(parents=True, exist_ok=True)
+
+    index_faiss = vectorstore_path / "index.faiss"
+    index_pkl = vectorstore_path / "index.pkl"
+
+    if index_faiss.exists() and index_pkl.exists():
+        vectorstore = FAISS.load_local(
+            str(vectorstore_path), embeddings, allow_dangerous_deserialization=True
+        )
+        vectorstore.add_documents(splits)
     else:
-        print("⚠️ 不支持的文件格式")
+        vectorstore = FAISS.from_documents(splits, embeddings)
+
+    vectorstore.save_local(str(vectorstore_path))
+    print(f"✅ 知识库 '{kb_name}' 索引保存成功")
+
+
+# ==================== 4. 知识库文档管理（系统设置专用） ====================
+def list_documents_in_kb(kb_name: str) -> list:
+    """列出知识库中所有上传的原始文档"""
+    kb_path = get_kb_path(kb_name)
+    if not kb_path.exists():
+        return []
+    docs = []
+    for f in kb_path.iterdir():
+        if f.is_file() and f.suffix.lower() in [".pdf", ".docx", ".doc"]:
+            docs.append(f.name)
+    return sorted(docs)
+
+
+def delete_document(kb_name: str, filename: str):
+    """删除单个文档 + 彻底避免维度错误"""
+    kb_path = get_kb_path(kb_name)
+    file_path = kb_path / filename
+
+    if not file_path.exists():
+        print(f"⚠️ 文件 {filename} 不存在")
+        return
+
+    file_path.unlink()
+    print(f"🗑️ 已删除文档：{filename}")
+
+    # 先删除旧索引，避免维度不匹配
+    vectorstore_path = kb_path / "faiss_index"
+    if vectorstore_path.exists():
+        shutil.rmtree(vectorstore_path)
+        print("🗑️ 已清除旧 FAISS 索引")
+
+    # 剩余文档重建索引
+    remaining_files = [str(kb_path / f) for f in list_documents_in_kb(kb_name)]
+    if remaining_files:
+        process_documents(kb_name, remaining_files)
+        print(f"✅ 知识库 '{kb_name}' 索引已重建（剩余 {len(remaining_files)} 个文档）")
+    else:
+        print(f"✅ 知识库 '{kb_name}' 已清空")
+
+
+def delete_knowledge_base(kb_name: str):
+    """删除整个知识库"""
+    kb_path = get_kb_path(kb_name)
+    if kb_path.exists():
+        shutil.rmtree(kb_path)
+        print(f"🗑️ 已完全删除知识库 '{kb_name}'")
+    else:
+        print(f"⚠️ 知识库 '{kb_name}' 不存在")
+
+
+# ==================== 5. 检索器（文献检索页面必需） ====================
+def get_retriever(kb_name: str, k: int = 12):
+    """获取指定知识库的检索器"""
+    vectorstore_path = get_kb_path(kb_name) / "faiss_index"
+    index_faiss = vectorstore_path / "index.faiss"
+    index_pkl = vectorstore_path / "index.pkl"
+
+    if not (vectorstore_path.exists() and index_faiss.exists() and index_pkl.exists()):
         return None
 
-    documents = loader.load()
-
-    # 优化切分参数
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=800,  # 增加块大小，从 500 提高到 800
-        chunk_overlap=150,  # 增加重叠度，从 50 提高到 150，确保上下文衔接
-        length_function=len,
-        # 增加中文标点作为切分符，防止在句子中间切断
-        separators=["\n\n", "\n", "。", "！", "？", " ", ""]
+    vectorstore = FAISS.load_local(
+        str(vectorstore_path), embeddings, allow_dangerous_deserialization=True
     )
-    texts = text_splitter.split_documents(documents)
-
-    # 3.2 文本切分 (Chunking)
-    # 中医文献通常语义紧密，建议 chunk_size 不要太小
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,  # 每个文本块 500 字
-        chunk_overlap=50,  # 块与块之间重叠 50 字，保证语境连续
-        length_function=len
-    )
-    texts = text_splitter.split_documents(documents)
-
-    # 3.3 创建并保存向量库
-    embeddings = get_embeddings()
-    # 将切分后的文本转化为向量并存入 FAISS
-    vector_db = FAISS.from_documents(texts, embeddings)
-
-    # 持久化存储，防止重启后丢失
-    vector_db.save_local("vector_store/db_tcm")
-    return vector_db
-
-
-# --- 4. 获取检索器 ---
-def get_retriever():
-    if not os.path.exists("vector_store/db_tcm"):
-        return None
-
-    embeddings = get_embeddings()
-    vector_db = FAISS.load_local(
-        "vector_store/db_tcm",
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
-
-    # k=4 是一个黄金参数，既保证了信息量，又不会因为太长让 AI 走神
-    return vector_db.as_retriever(search_kwargs={"k": 4})
+    return vectorstore.as_retriever(search_kwargs={"k": k})

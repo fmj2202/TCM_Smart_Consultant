@@ -1,22 +1,56 @@
-# 忽略 API 密钥和环境变量
+# ==================== 敏感信息 ====================
 .env
+*.env.local
+.streamlit/secrets.toml
 
-# 忽略 Python 虚拟环境
+# ==================== 虚拟环境 ====================
 venv/
 .venv/
 env/
+ENV/
 
-# 忽略缓存文件
+# ==================== Python 缓存与编译文件 ====================
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# 忽略本地生成的向量数据库（建议让用户自己上传文档生成）
-vector_store/
+# ==================== 项目特定忽略 ====================
+# FAISS 向量索引（体积大，clone 后用户自己上传文档重新生成）
+data/kbs/*/faiss_index/
 
-# 忽略用户上传的临时文件
+# 临时上传文件目录
 data/temp/
+
+# 旧版可能残留的 docs 目录（当前已使用 data/kbs）
 data/docs/*
 !data/docs/.gitkeep
 
-# 忽略 Streamlit 的本地配置
+# ==================== 本地 IDE / 系统文件 ====================
+.DS_Store
+Thumbs.db
+*.log
+*.log.*
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==================== Streamlit 相关 ====================
 .streamlit/

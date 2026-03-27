@@ -99,46 +99,83 @@ if menu == "智能问诊":
 elif menu == "文献检索":
     st.header("📚 中医药文献知识库")
 
-    # 导入刚刚写的工具函数
-    from src.utils import process_document, get_retriever
+    # 导入优化后的工具函数
+    from src.utils import process_documents, get_retriever, list_knowledge_bases, create_knowledge_base
     from src.chains.rag_chain import get_rag_chain
 
-    # 1. 文件上传
-    uploaded_file = st.file_uploader("上传中医文献 (PDF/Docx)", type=["pdf", "docx"])
+    # ====================== 知识库管理 ======================
+    st.subheader("📁 知识库管理")
+    kbs = list_knowledge_bases()
+    if not kbs:
+        st.warning("暂无知识库，请先创建。")
+        kbs = ["默认知识库"]  # 首次使用时显示占位
 
-    if uploaded_file:
-        # 保存文件到临时目录
-        with open(f"data/docs/{uploaded_file.name}", "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        with st.spinner("正在解析文献并构建向量数据库..."):
-            process_document(f"data/docs/{uploaded_file.name}")
-            st.success("文献加载完成！AI 现在已经学习了该内容。")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        selected_kb = st.selectbox(
+            "选择要使用的知识库",
+            kbs,
+            key="kb_select"
+        )
+    with col2:
+        new_kb_name = st.text_input("新建知识库名称", placeholder="例如：经典古籍")
+        if st.button("➕ 创建知识库") and new_kb_name.strip():
+            create_knowledge_base(new_kb_name.strip())
+            st.success(f"知识库 '{new_kb_name}' 创建成功！")
+            st.rerun()
 
     st.markdown("---")
 
-    # 2. 检索问答
-    query = st.text_input("请输入您想基于文献查询的问题：")
-    if query:
-        retriever = get_retriever()
+    # ====================== 文档上传（支持批量） ======================
+    st.subheader("📤 上传文档到当前知识库")
+    uploaded_files = st.file_uploader(
+        "上传中医文献 (PDF / Docx，支持多个文件)",
+        type=["pdf", "docx"],
+        accept_multiple_files=True,
+        help="一次可上传多个文件，全部会存入当前选中的知识库"
+    )
+
+    if uploaded_files and st.button("✅ 确认上传并处理"):
+        # 保存原始文件到知识库目录
+        kb_path = f"data/kbs/{selected_kb}"
+        os.makedirs(kb_path, exist_ok=True)
+
+        saved_paths = []
+        for uploaded_file in uploaded_files:
+            file_path = os.path.join(kb_path, uploaded_file.name)
+            with open(file_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            saved_paths.append(file_path)
+
+        with st.spinner(f"正在解析 {len(uploaded_files)} 个文档并构建向量索引（知识库：{selected_kb}）..."):
+            process_documents(selected_kb, saved_paths)
+            st.success(
+                f"✅ 已成功将 {len(uploaded_files)} 个文档添加到知识库 '{selected_kb}'！文档已永久保存，可随时使用。")
+
+    st.markdown("---")
+
+    # ====================== 文献提问 ======================
+    st.subheader("🔍 基于文献提问")
+    query = st.text_input("请输入您想基于文献查询的问题：", key="query_input")
+
+    if query and selected_kb:
+        retriever = get_retriever(selected_kb)
         if retriever:
             with st.spinner("🔍 正在检索文献..."):
-                # 直接使用用户的原始问题 query，不要再加“疾病名称”前缀
-                from src.chains.rag_chain import get_rag_chain
-
                 rag_chain = get_rag_chain(st.session_state.llm, retriever)
-
-                # 直接传 query
                 response = rag_chain.invoke({"query": query})
 
                 st.write("### 🤖 AI 的分析结果：")
                 st.info(response["result"])
 
-                # 保留这个调试功能，让你看清 AI 引用了哪段话
-                with st.expander("🛠️ 原始文献参考"):
+                # 展示引用片段（便于调试与信任）
+                with st.expander("📖 原始文献参考片段"):
                     search_results = retriever.invoke(query)
                     for i, doc in enumerate(search_results):
-                        st.write(f"**片段 {i + 1}：** {doc.page_content[:300]}...")
+                        st.write(f"**片段 {i + 1}**（来源：{doc.metadata.get('source', '未知')}）：")
+                        st.caption(doc.page_content[:350] + "..." if len(doc.page_content) > 350 else doc.page_content)
+        else:
+            st.warning("当前知识库还没有任何文档，请先上传文献。")
 
 elif menu == "中医Agent":
     st.header("🤖 中医智能 Agent — 药材识别")
@@ -189,11 +226,57 @@ elif menu == "中医Agent":
                 except Exception as e:
                     st.error(f"识别过程中出现错误：{e}")
 
-
 elif menu == "系统设置":
     st.header("⚙️ 系统配置")
-    st.write(f"当前使用的模型: {st.session_state.llm.model_name}")
-    if st.button("清空对话历史"):
+
+    st.write(f"**当前使用的模型**：{st.session_state.llm.model_name}")
+
+    # ====================== 1. 清空对话历史（原有功能保留） ======================
+    if st.button("🗑️ 清空对话历史"):
         st.session_state.messages = []
         st.session_state.memory.clear()
+        st.success("对话历史已清空！")
         st.rerun()
+
+    st.markdown("---")
+
+    # ====================== 2. 知识库管理（已包含删除文档 + 新增删除知识库） ======================
+    st.subheader("📁 知识库文档管理")
+    from src.utils import (
+        list_knowledge_bases,
+        list_documents_in_kb,
+        delete_document,
+        delete_knowledge_base,
+    )
+
+    kbs = list_knowledge_bases()
+    if not kbs:
+        st.info("暂无知识库，请先去「文献检索」页面创建并上传文档。")
+    else:
+        for kb_name in kbs:
+            with st.expander(f"📚 知识库：**{kb_name}**", expanded=False):
+                # 删除整个知识库按钮（新增功能）
+                if st.button("🗑️ 删除整个知识库", key=f"del_kb_{kb_name}", type="secondary"):
+                    with st.spinner(f"正在删除知识库 '{kb_name}' ..."):
+                        delete_knowledge_base(kb_name)
+                        st.success(f"✅ 知识库 '{kb_name}' 已完全删除！")
+                        st.rerun()
+
+                st.markdown("---")
+
+                # 文档列表
+                docs = list_documents_in_kb(kb_name)
+                if not docs:
+                    st.caption("该知识库暂无文档")
+                else:
+                    st.caption(f"共 {len(docs)} 个文档")
+                    for doc in docs:
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.write(f"📄 {doc}")
+                        with col2:
+                            if st.button("🗑️ 删除文档", key=f"del_doc_{kb_name}_{doc}"):
+                                with st.spinner(f"正在删除 {doc} 并更新索引..."):
+                                    delete_document(kb_name, doc)
+                                    st.success(f"✅ 文档 {doc} 已删除！索引已自动重建。")
+                                    st.rerun()

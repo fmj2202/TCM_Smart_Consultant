@@ -46,7 +46,33 @@ with st.sidebar:
 
 # 4. 页面逻辑切换
 if menu == "智能问诊":
-    st.header("🩺 中医智能问诊小助手")
+    st.header("🩺 四诊合参——规范化问诊")
+
+    # --- 简历亮点：展示问诊进度 ---
+    # 我们通过分析历史消息的数量或内容，简单模拟一个进度条
+    # 也可以手动在侧边栏显示当前处于哪一环节
+    progress_map = {"望": 25, "闻": 50, "问": 75, "切": 100}
+
+    # 默认进度
+    current_step_val = 0
+
+    # 简单逻辑：根据对话轮数动态增加进度（实际项目中可以根据AI输出的【当前进度】来匹配）
+    chat_len = len(st.session_state.messages)
+    if chat_len < 2:
+        current_step_val = 10
+    elif chat_len < 4:
+        current_step_val = 30
+    elif chat_len < 6:
+        current_step_val = 60
+    elif chat_len < 8:
+        current_step_val = 90
+    else:
+        current_step_val = 100
+
+    st.write(f"问诊完成度：{current_step_val}%")
+    st.progress(current_step_val)
+    st.markdown("---")
+
     st.write("请描述您的症状，我将为您提供初步的辨证分析。")
 
     # 显示历史消息

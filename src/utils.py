@@ -109,6 +109,3 @@ def get_retriever():
 
     # k=4 是一个黄金参数，既保证了信息量，又不会因为太长让 AI 走神
     return vector_db.as_retriever(search_kwargs={"k": 4})
-
-
-
